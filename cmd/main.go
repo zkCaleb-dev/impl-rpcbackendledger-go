@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
-	client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/support/log"
+	"github.com/zkCaleb-dev/internal/rpc"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
@@ -26,7 +26,21 @@ func main() {
 
 	backend := ledgerbackend.NewRPCLedgerBackend(rpcBackendOptions)
 
-	latestLedgerSeq := getLatestLedger(rpcServerUrl, ctx)
+	//* Intento pseudo desacoplado.
+	rpcConfig := rpc.Config{
+		Url:        rpcServerUrl,
+		HttpClient: &http.Client{},
+	}
+	rpcClient := rpc.NewRpcClient(rpcConfig)
+	latestLedgerSeq, err := rpcClient.GetLatestLedgerSequence(ctx)
+	if err != nil {
+		println("Error en GetLatestLedgerSequence() de main: ", err)
+	}
+
+	//* Intento con funcion
+	// latestLedgerSeq := getLatestLedger(rpcServerUrl, ctx)
+
+	//* Intento estructurado
 	// latestLedgerSeq, err := backend.GetLatestLedgerSequence(ctx)
 	// if err != nil {
 	// 	fmt.Println("Error en PrepareRange:", err)
@@ -35,7 +49,7 @@ func main() {
 
 	// ledgerRange := backends.BoundedRange(startingSeq, startingSeq+ledgersToRead)
 	ledgerRangeUnbounded := ledgerbackend.UnboundedRange(latestLedgerSeq)
-	err := backend.PrepareRange(ctx, ledgerRangeUnbounded)
+	err = backend.PrepareRange(ctx, ledgerRangeUnbounded)
 	if err != nil {
 		fmt.Println("Error en ledgerRangeUnbounded:", err)
 		return
@@ -67,16 +81,29 @@ func main() {
 
 }
 
-func getLatestLedger(url string, ctx context.Context) uint32 {
+// func getLatestLedger(url string, ctx context.Context) uint32 {
 
-	rpcClient := client.NewClient(url, &http.Client{})
-	health, err := rpcClient.GetHealth(ctx)
-	if err != nil {
-		fmt.Println("Error with GetHealth(): ", err)
-	}
-	latestLedger := health.LatestLedger
+// 	// Creamos el cliente.
+// 	rpcClient := client.NewClient(url, &http.Client{})
 
-	fmt.Println("Latest Ledger by getLatestLedger: ", latestLedger)
+// 	// Con el cliente usamos el metodo GetHealth(), que retorna //* (protocol.GetHealthResponse, error)
+// 	// Que tiene las propiedades Status, LatestLedger, OldestLedger, LedgerRetentionWindow
+// 	// health, err := rpcClient.GetHealth(ctx)
+// 	// if err != nil {
+// 	// 	fmt.Println("Error with GetHealth(): ", err)
+// 	// }
 
-	return latestLedger
-}
+// 	latestLedgerSeq, err := rpcClient.GetLatestLedger(ctx)
+// 	if err != nil {
+// 		fmt.Println("Error with GetLatesLedger(): ", err)
+// 	}
+
+// 	// Asignamos el valor que necesitamos a una variable.
+// 	// latestLedger := health.LatestLedger
+
+// 	// Se imprime el valor.
+// 	// fmt.Println("Latest Ledger by getLatestLedger: ", latestLedger)
+
+// 	// Se retorna.
+// 	return latestLedgerSeq.Sequence
+// }
