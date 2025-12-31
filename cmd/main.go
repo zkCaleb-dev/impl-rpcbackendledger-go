@@ -3,107 +3,94 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
-
-	"github.com/stellar/go-stellar-sdk/ingest"
-	"github.com/stellar/go-stellar-sdk/support/log"
-	"github.com/zkCaleb-dev/internal/rpc"
 
 	"github.com/sirupsen/logrus"
+	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
+	stellarlog "github.com/stellar/go-stellar-sdk/support/log"
+	"github.com/zkCaleb-dev/internal/stellar"
+)
+
+const (
+	sorobanTestnetURL = "https://soroban-testnet.stellar.org"
+	networkPassphrase = "Test SDF Network ; September 2015"
 )
 
 func main() {
-
-	rpcServerUrl := "https://soroban-testnet.stellar.org"
-	rpcBackendOptions := ledgerbackend.RPCLedgerBackendOptions{
-		RPCServerURL: rpcServerUrl,
-	}
 	ctx := context.Background()
 
-	lg := log.New()
+	// Setup loggin
+	lg := stellarlog.New()
 	lg.SetLevel(logrus.ErrorLevel)
 
-	backend := ledgerbackend.NewRPCLedgerBackend(rpcBackendOptions)
+	// Crear cliente de Stellar
+	stellarClient := stellar.NewClient(sorobanTestnetURL)
 
-	//* Intento pseudo desacoplado.
-	rpcConfig := rpc.Config{
-		Url:        rpcServerUrl,
-		HttpClient: &http.Client{},
-	}
-	rpcClient := rpc.NewRpcClient(rpcConfig)
-	latestLedgerSeq, err := rpcClient.GetLatestLedgerSequence(ctx)
+	// Obtener ultimo ledger
+	latestSeq, err := stellarClient.GetLatestLedgerSequence(ctx)
 	if err != nil {
-		println("Error en GetLatestLedgerSequence() de main: ", err)
+		fmt.Errorf("getting latest ledger: %w", err)
 	}
 
-	//* Intento con funcion
-	// latestLedgerSeq := getLatestLedger(rpcServerUrl, ctx)
+	fmt.Printf("Starting from ledger: %d\n", latestSeq)
 
-	//* Intento estructurado
-	// latestLedgerSeq, err := backend.GetLatestLedgerSequence(ctx)
-	// if err != nil {
-	// 	fmt.Println("Error en PrepareRange:", err)
-	// 	return
-	// }
+	// Setup backend
+	backend := ledgerbackend.NewRPCLedgerBackend(ledgerbackend.RPCLedgerBackendOptions{
+		RPCServerURL: sorobanTestnetURL,
+	})
 
-	// ledgerRange := backends.BoundedRange(startingSeq, startingSeq+ledgersToRead)
-	ledgerRangeUnbounded := ledgerbackend.UnboundedRange(latestLedgerSeq)
-	err = backend.PrepareRange(ctx, ledgerRangeUnbounded)
-	if err != nil {
-		fmt.Println("Error en ledgerRangeUnbounded:", err)
-		return
+	// Preparar rango
+	ledgerRange := ledgerbackend.UnboundedRange(latestSeq)
+	if err := backend.PrepareRange(ctx, ledgerRange); err != nil {
+		fmt.Errorf("preparing ledger range: %w", err)
 	}
 
-	for {
-		ledger, err := backend.GetLedger(ctx, latestLedgerSeq)
-		if err != nil {
-			fmt.Println("Error en ledger:", err)
-			return
-		}
-
-		transaction, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta("Test SDF Network ; September 2015", ledger)
-		if err != nil {
-			fmt.Println("Error en transaction:", err)
-			return
-		}
-		defer transaction.Close()
-
-		fmt.Println("Actual Sequence: ", transaction.GetSequence())
-
-		read, err := transaction.Read()
-
-		changes, err := read.GetChanges()
-		fmt.Println("Changes: ", changes)
-
-		latestLedgerSeq++
-	}
-
+	// Procesar ledgers
+	processLedgers(ctx, backend, latestSeq)
 }
 
-// func getLatestLedger(url string, ctx context.Context) uint32 {
+func processLedgers(ctx context.Context, backend ledgerbackend.LedgerBackend, startSeq uint32) error {
+	currentSeq := startSeq
 
-// 	// Creamos el cliente.
-// 	rpcClient := client.NewClient(url, &http.Client{})
+	for {
+		if err := processLedger(ctx, backend, currentSeq); err != nil {
+			return fmt.Errorf("processing ledger %d: %w", currentSeq, err)
+		}
+		currentSeq++
+	}
+}
 
-// 	// Con el cliente usamos el metodo GetHealth(), que retorna //* (protocol.GetHealthResponse, error)
-// 	// Que tiene las propiedades Status, LatestLedger, OldestLedger, LedgerRetentionWindow
-// 	// health, err := rpcClient.GetHealth(ctx)
-// 	// if err != nil {
-// 	// 	fmt.Println("Error with GetHealth(): ", err)
-// 	// }
+func processLedger(ctx context.Context, backend ledgerbackend.LedgerBackend, seq uint32) error {
 
-// 	latestLedgerSeq, err := rpcClient.GetLatestLedger(ctx)
-// 	if err != nil {
-// 		fmt.Println("Error with GetLatesLedger(): ", err)
-// 	}
+	ledger, err := backend.GetLedger(ctx, seq)
+	if err != nil {
+		return fmt.Errorf("getting ledger: %w", err)
+	}
 
-// 	// Asignamos el valor que necesitamos a una variable.
-// 	// latestLedger := health.LatestLedger
+	// Obtener ledger
+	txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(
+		networkPassphrase,
+		ledger,
+	)
+	if err != nil {
+		return fmt.Errorf("creating transaction reader: %w", err)
+	}
+	defer txReader.Close()
 
-// 	// Se imprime el valor.
-// 	// fmt.Println("Latest Ledger by getLatestLedger: ", latestLedger)
+	fmt.Printf("Processing sequence: %d\n", txReader.GetSequence())
 
-// 	// Se retorna.
-// 	return latestLedgerSeq.Sequence
-// }
+	tx, err := txReader.Read()
+	if err != nil {
+		return fmt.Errorf("reading transaction: %w", err)
+	}
+
+	// Leer transaccion
+	changes, err := tx.GetChanges()
+	if err != nil {
+		return fmt.Errorf("getting changes: %w", err)
+	}
+
+	fmt.Printf("Changes: %v\n", changes)
+
+	return nil
+}
