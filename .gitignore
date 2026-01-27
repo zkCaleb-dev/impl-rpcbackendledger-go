@@ -1,0 +1,21 @@
+# IDE
+.vscode/
+.idea/
+
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+go.work
+go.work.sum
+
+# OS
+.DS_Store
+Thumbs.db
